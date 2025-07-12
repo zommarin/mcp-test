@@ -1,6 +1,6 @@
 use anyhow::Result;
 use log::{debug, error, info, warn};
-use mcp_test::ClickHouseClient;
+use mcp_test::{ClickHouseClient, ClickHouseError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
@@ -51,7 +51,7 @@ impl McpServer {
         }
     }
 
-    fn connect_clickhouse(&mut self) -> Result<()> {
+    async fn connect_clickhouse(&mut self) -> Result<()> {
         let url = std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_string());
         let database = std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "default".to_string());
         let username = std::env::var("CLICKHOUSE_USERNAME").unwrap_or_else(|_| "default".to_string());
@@ -59,10 +59,21 @@ impl McpServer {
         
         info!("Connecting to ClickHouse at {} with database {}", url, database);
         
-        let client = ClickHouseClient::new(&url, &database, &username, &password);
+        let client = ClickHouseClient::new(&url, &database, &username, &password)
+            .with_retry_config(3, std::time::Duration::from_millis(100));
         
-        self.clickhouse_client = Some(client);
-        Ok(())
+        // Perform health check
+        match client.health_check().await {
+            Ok(_) => {
+                info!("ClickHouse connection established successfully");
+                self.clickhouse_client = Some(client);
+                Ok(())
+            }
+            Err(e) => {
+                error!("ClickHouse connection failed: {}", e);
+                Err(anyhow::anyhow!("ClickHouse connection failed: {}", e))
+            }
+        }
     }
 
     async fn handle_request(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
@@ -119,7 +130,7 @@ impl McpServer {
         self.initialized = true;
         info!("MCP server initialization completed");
         
-        if let Err(e) = self.connect_clickhouse() {
+        if let Err(e) = self.connect_clickhouse().await {
             warn!("Failed to connect to ClickHouse: {}", e);
         }
         
@@ -190,26 +201,16 @@ impl McpServer {
         let params: ToolCallParams = serde_json::from_value(request.params.unwrap_or_default())?;
         debug!("Calling tool: {}", params.name);
         
-        if self.clickhouse_client.is_none() {
-            return Ok(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: None,
-                error: Some(serde_json::json!({
-                    "code": -32603,
-                    "message": "ClickHouse client not connected"
-                })),
-                id: request.id,
-            });
-        }
-        
         let result = match params.name.as_str() {
-            "list_databases" => self.list_databases().await,
+            "list_databases" => {
+                self.list_databases().await.map_err(|e| anyhow::anyhow!(e))
+            },
             "list_tables" => {
                 let args = params.arguments.unwrap_or_default();
                 let database = args.get("database")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing database argument"))?;
-                self.list_tables(database).await
+                self.list_tables(database).await.map_err(|e| anyhow::anyhow!(e))
             },
             "get_table_schema" => {
                 let args = params.arguments.unwrap_or_default();
@@ -219,7 +220,7 @@ impl McpServer {
                 let table = args.get("table")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing table argument"))?;
-                self.get_table_schema(database, table).await
+                self.get_table_schema(database, table).await.map_err(|e| anyhow::anyhow!(e))
             },
             _ => Err(anyhow::anyhow!("Unknown tool: {}", params.name)),
         };
@@ -237,13 +238,29 @@ impl McpServer {
                 id: request.id,
             }),
             Err(e) => {
-                error!("Tool call failed: {}", e);
+                error!("Tool call '{}' failed: {}", params.name, e);
+                
+                // Determine appropriate error code based on error type
+                let (code, message) = if let Some(clickhouse_error) = e.downcast_ref::<ClickHouseError>() {
+                    match clickhouse_error {
+                        ClickHouseError::InvalidIdentifier { .. } => (-32602, format!("Invalid params: {}", e)),
+                        ClickHouseError::DatabaseNotFound { .. } => (-32600, format!("Database not found: {}", e)),
+                        ClickHouseError::TableNotFound { .. } => (-32600, format!("Table not found: {}", e)),
+                        ClickHouseError::PermissionDenied { .. } => (-32600, format!("Permission denied: {}", e)),
+                        ClickHouseError::ServiceUnavailable { .. } => (-32603, format!("Service unavailable: {}", e)),
+                        ClickHouseError::AuthenticationFailed { .. } => (-32600, format!("Authentication failed: {}", e)),
+                        _ => (-32603, format!("Internal error: {}", e)),
+                    }
+                } else {
+                    (-32603, format!("Tool execution failed: {}", e))
+                };
+                
                 Ok(JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: None,
                     error: Some(serde_json::json!({
-                        "code": -32603,
-                        "message": format!("Tool execution failed: {}", e)
+                        "code": code,
+                        "message": message
                     })),
                     id: request.id,
                 })
@@ -251,8 +268,11 @@ impl McpServer {
         }
     }
 
-    async fn list_databases(&self) -> Result<String> {
-        let client = self.clickhouse_client.as_ref().unwrap();
+    async fn list_databases(&self) -> Result<String, ClickHouseError> {
+        let client = self.clickhouse_client.as_ref()
+            .ok_or_else(|| ClickHouseError::ServiceUnavailable {
+                message: "ClickHouse client not connected".to_string(),
+            })?;
         
         let databases = client.list_databases().await?;
         
@@ -264,8 +284,11 @@ impl McpServer {
         Ok(result)
     }
 
-    async fn list_tables(&self, database: &str) -> Result<String> {
-        let client = self.clickhouse_client.as_ref().unwrap();
+    async fn list_tables(&self, database: &str) -> Result<String, ClickHouseError> {
+        let client = self.clickhouse_client.as_ref()
+            .ok_or_else(|| ClickHouseError::ServiceUnavailable {
+                message: "ClickHouse client not connected".to_string(),
+            })?;
         
         let tables = client.list_tables(database).await?;
         
@@ -277,8 +300,11 @@ impl McpServer {
         Ok(result)
     }
 
-    async fn get_table_schema(&self, database: &str, table: &str) -> Result<String> {
-        let client = self.clickhouse_client.as_ref().unwrap();
+    async fn get_table_schema(&self, database: &str, table: &str) -> Result<String, ClickHouseError> {
+        let client = self.clickhouse_client.as_ref()
+            .ok_or_else(|| ClickHouseError::ServiceUnavailable {
+                message: "ClickHouse client not connected".to_string(),
+            })?;
         
         let columns = client.get_table_schema(database, table).await?;
         

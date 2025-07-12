@@ -1,9 +1,10 @@
 use mcp_test::{ClickHouseClient, ColumnInfo, DatabaseInfo, TableInfo};
 use serde_json::json;
+use std::time::Duration;
 
 #[tokio::test]
 async fn test_clickhouse_client_creation() {
-    let client = ClickHouseClient::new(
+    let _client = ClickHouseClient::new(
         "http://localhost:8123",
         "default",
         "default",
@@ -11,6 +12,19 @@ async fn test_clickhouse_client_creation() {
     );
     
     // Just test that we can create a client without panicking
+    assert!(true);
+}
+
+#[tokio::test]
+async fn test_clickhouse_client_with_retry_config() {
+    let _client = ClickHouseClient::new(
+        "http://localhost:8123",
+        "default",
+        "default",
+        ""
+    ).with_retry_config(5, Duration::from_millis(200));
+    
+    // Test that we can create a client with custom retry config
     assert!(true);
 }
 

@@ -81,3 +81,30 @@ echo '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "list_tables
 # Get table schema
 echo '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "get_table_schema", "arguments": {"database": "system", "table": "tables"}}, "id": 1}' | cargo run
 ```
+
+## Error Handling
+
+The server includes comprehensive error handling:
+
+### Input Validation
+- Database and table identifiers are validated (max 64 chars, alphanumeric + underscore/hyphen, cannot start with digit)
+- Invalid identifiers return proper error messages with details
+
+### Retry Logic
+- Exponential backoff retry for network errors
+- Configurable retry count and delay
+- Non-retryable errors (auth, permission) fail immediately
+
+### Error Types
+- `InvalidIdentifier` - Invalid database/table names
+- `DatabaseNotFound` - Requested database doesn't exist
+- `TableNotFound` - Requested table doesn't exist in database
+- `PermissionDenied` - Access denied for operation
+- `NetworkError` - Connection or network issues
+- `AuthenticationFailed` - Invalid credentials
+- `ServiceUnavailable` - ClickHouse server not available
+- `QueryTimeout` - Query exceeded timeout limit
+
+### Health Checks
+- Connection health check on startup
+- Automatic retry with backoff on connection failures

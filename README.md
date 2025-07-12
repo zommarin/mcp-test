@@ -121,10 +121,33 @@ The tests include:
 - ClickHouse client functionality
 - Integration test framework (requires running ClickHouse instance)
 
+## Error Handling
+
+The implementation includes production-ready error handling:
+
+- **Input Validation**: Database/table identifiers validated for security
+- **Retry Logic**: Exponential backoff for transient failures
+- **Structured Errors**: Detailed error types with context
+- **Health Checks**: Connection validation on startup
+- **Graceful Degradation**: Service remains available when ClickHouse is down
+
+### Error Types
+
+| Error | Description | Retryable |
+|-------|-------------|-----------|
+| `InvalidIdentifier` | Invalid database/table name | No |
+| `DatabaseNotFound` | Database doesn't exist | No |
+| `TableNotFound` | Table doesn't exist | No |
+| `NetworkError` | Connection issues | Yes |
+| `AuthenticationFailed` | Invalid credentials | No |
+| `PermissionDenied` | Access denied | No |
+| `ServiceUnavailable` | ClickHouse unavailable | Yes |
+
 ## Dependencies
 
-- **tokio** - Async runtime
+- **tokio** - Async runtime with time features
 - **serde** - Serialization/deserialization
 - **clickhouse** - ClickHouse client library
+- **thiserror** - Structured error handling
 - **log** / **env_logger** - Configurable logging
-- **anyhow** - Error handling 
+- **anyhow** - Error handling utilities 
