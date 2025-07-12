@@ -1,4 +1,5 @@
 use anyhow::Result;
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
@@ -34,28 +35,36 @@ struct McpServer {
 
 impl McpServer {
     fn new() -> Self {
+        debug!("Creating new MCP server instance");
         Self {
             initialized: false,
         }
     }
 
     async fn handle_request(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
+        debug!("Handling request: method={}, id={:?}", request.method, request.id);
+        
         match request.method.as_str() {
             "initialize" => self.handle_initialize(request).await,
             "initialized" => self.handle_initialized(request).await,
-            _ => Ok(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: None,
-                error: Some(serde_json::json!({
-                    "code": -32601,
-                    "message": "Method not found"
-                })),
-                id: request.id,
-            }),
+            _ => {
+                warn!("Unknown method requested: {}", request.method);
+                Ok(JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "code": -32601,
+                        "message": "Method not found"
+                    })),
+                    id: request.id,
+                })
+            }
         }
     }
 
     async fn handle_initialize(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
+        info!("Initializing MCP server");
+        
         let response = JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             result: Some(serde_json::json!({
@@ -74,11 +83,13 @@ impl McpServer {
             id: request.id,
         };
         
+        debug!("Sent initialize response");
         Ok(response)
     }
 
     async fn handle_initialized(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse> {
         self.initialized = true;
+        info!("MCP server initialization completed");
         
         Ok(JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
@@ -89,6 +100,8 @@ impl McpServer {
     }
 
     async fn run(&mut self) -> Result<()> {
+        info!("Starting MCP server main loop");
+        
         let stdin = tokio::io::stdin();
         let mut reader = AsyncBufReader::new(stdin);
         let mut stdout = tokio::io::stdout();
@@ -100,6 +113,7 @@ impl McpServer {
             let bytes_read = reader.read_line(&mut line).await?;
             
             if bytes_read == 0 {
+                info!("End of input reached, shutting down server");
                 break;
             }
             
@@ -108,16 +122,19 @@ impl McpServer {
                 continue;
             }
             
+            debug!("Received line: {}", line);
+            
             match serde_json::from_str::<JsonRpcRequest>(line) {
                 Ok(request) => {
                     let response = self.handle_request(request).await?;
                     let response_json = serde_json::to_string(&response)?;
+                    debug!("Sending response: {}", response_json);
                     stdout.write_all(response_json.as_bytes()).await?;
                     stdout.write_all(b"\n").await?;
                     stdout.flush().await?;
                 }
                 Err(e) => {
-                    eprintln!("Failed to parse JSON-RPC request: {}", e);
+                    error!("Failed to parse JSON-RPC request: {} - Input: {}", e, line);
                     let error_response = JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
                         result: None,
@@ -141,6 +158,10 @@ impl McpServer {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+    
+    info!("Starting MCP server v{}", env!("CARGO_PKG_VERSION"));
+    
     let mut server = McpServer::new();
     server.run().await?;
     Ok(())

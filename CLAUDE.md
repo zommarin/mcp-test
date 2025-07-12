@@ -18,6 +18,18 @@ Standard Rust development commands:
 - `cargo fmt` - Format code
 - `cargo clippy` - Run linter
 
+## Logging
+The server uses `env_logger` for configurable logging. Control log levels with the `RUST_LOG` environment variable:
+
+- `RUST_LOG=debug cargo run` - Show all debug, info, warn, and error messages
+- `RUST_LOG=info cargo run` - Show info, warn, and error messages (default level)
+- `RUST_LOG=warn cargo run` - Show only warn and error messages
+- `RUST_LOG=error cargo run` - Show only error messages
+
+You can also filter by module:
+- `RUST_LOG=mcp_test=debug cargo run` - Debug level for this crate only
+- `RUST_LOG=mcp_test::main=trace cargo run` - Trace level for main module only
+
 ## Project Structure
 - `src/main.rs` - Main MCP server implementation
 - `Cargo.toml` - Project dependencies and metadata
