@@ -52,4 +52,32 @@ Key components:
 Currently implements basic MCP protocol methods:
 - `initialize` - Server initialization with capabilities
 - `initialized` - Notification that initialization is complete
-- Capability declarations for tools, resources, and prompts (empty for now)
+- `tools/list` - List available tools
+- `tools/call` - Execute tool calls
+
+## ClickHouse Integration
+The server provides MCP tools for interacting with ClickHouse databases:
+
+### Available Tools
+- `list_databases` - List all databases in the ClickHouse instance
+- `list_tables` - List all tables in a specific database
+- `get_table_schema` - Get detailed schema information for a table
+
+### Configuration
+Set these environment variables to configure ClickHouse connection:
+- `CLICKHOUSE_URL` - Default: http://localhost:8123
+- `CLICKHOUSE_DATABASE` - Default: default
+- `CLICKHOUSE_USERNAME` - Default: default
+- `CLICKHOUSE_PASSWORD` - Default: (empty)
+
+### Usage Examples
+```bash
+# List all databases
+echo '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "list_databases"}, "id": 1}' | cargo run
+
+# List tables in a database
+echo '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "list_tables", "arguments": {"database": "system"}}, "id": 1}' | cargo run
+
+# Get table schema
+echo '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "get_table_schema", "arguments": {"database": "system", "table": "tables"}}, "id": 1}' | cargo run
+```
