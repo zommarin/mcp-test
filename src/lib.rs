@@ -264,7 +264,7 @@ impl ClickHouseClient {
         
         let columns = self.with_retry(|| async {
             self.client
-                .query("SELECT name, type, default_type, default_expression, comment, is_in_partition_key, is_in_sorting_key, is_in_primary_key, is_in_sampling_key FROM system.columns WHERE database = ? AND table = ? ORDER BY position")
+                .query("SELECT name, type, default_kind as default_type, default_expression, comment, is_in_partition_key, is_in_sorting_key, is_in_primary_key, is_in_sampling_key FROM system.columns WHERE database = ? AND table = ? ORDER BY position")
                 .bind(database)
                 .bind(table)
                 .fetch_all()
