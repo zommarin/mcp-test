@@ -236,6 +236,21 @@ impl ClickHouseClient {
         Self::validate_identifier(database)?;
         info!("Listing tables in database '{}'", database);
         
+        // First check if the database exists
+        let db_exists: u8 = self.with_retry(|| async {
+            self.client
+                .query("SELECT count(*) > 0 FROM system.databases WHERE name = ?")
+                .bind(database)
+                .fetch_one()
+                .await
+        }).await?;
+        
+        if db_exists == 0 {
+            return Err(ClickHouseError::DatabaseNotFound {
+                database: database.to_string(),
+            });
+        }
+        
         let tables = self.with_retry(|| async {
             self.client
                 .query("SELECT name, database, engine FROM system.tables WHERE database = ? ORDER BY name")
@@ -261,6 +276,38 @@ impl ClickHouseClient {
         Self::validate_identifier(database)?;
         Self::validate_identifier(table)?;
         info!("Getting schema for table '{}.{}'", database, table);
+        
+        // First check if the database exists
+        let db_exists: u8 = self.with_retry(|| async {
+            self.client
+                .query("SELECT count(*) > 0 FROM system.databases WHERE name = ?")
+                .bind(database)
+                .fetch_one()
+                .await
+        }).await?;
+        
+        if db_exists == 0 {
+            return Err(ClickHouseError::DatabaseNotFound {
+                database: database.to_string(),
+            });
+        }
+        
+        // Then check if the table exists
+        let table_exists: u8 = self.with_retry(|| async {
+            self.client
+                .query("SELECT count(*) > 0 FROM system.tables WHERE database = ? AND name = ?")
+                .bind(database)
+                .bind(table)
+                .fetch_one()
+                .await
+        }).await?;
+        
+        if table_exists == 0 {
+            return Err(ClickHouseError::TableNotFound {
+                database: database.to_string(),
+                table: table.to_string(),
+            });
+        }
         
         let columns = self.with_retry(|| async {
             self.client
