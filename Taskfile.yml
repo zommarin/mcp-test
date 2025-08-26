@@ -1,0 +1,147 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  DOCKER_COMPOSE: docker-compose
+  CLICKHOUSE_URL: http://localhost:8123
+
+tasks:
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  # Docker tasks
+  up:
+    desc: "Start ClickHouse in Docker"
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up -d"
+    status:
+      - "{{.DOCKER_COMPOSE}} ps --services --filter 'status=running' | grep -q clickhouse"
+
+  down:
+    desc: "Stop and remove ClickHouse container"
+    cmds:
+      - "{{.DOCKER_COMPOSE}} down"
+
+  restart:
+    desc: "Restart ClickHouse container"
+    cmds:
+      - task: down
+      - task: up
+
+  logs:
+    desc: "Show ClickHouse logs"
+    cmds:
+      - "{{.DOCKER_COMPOSE}} logs -f clickhouse"
+
+  wait-for-clickhouse:
+    desc: "Wait for ClickHouse to be ready"
+    cmds:
+      - |
+        echo "Waiting for ClickHouse to be ready..."
+        for i in {1..30}; do
+          if curl -s {{.CLICKHOUSE_URL}}/ping > /dev/null; then
+            echo "ClickHouse is ready!"
+            exit 0
+          fi
+          echo "Waiting... ($i/30)"
+          sleep 1
+        done
+        echo "ClickHouse failed to start"
+        exit 1
+    silent: false
+
+  # Build tasks
+  build:
+    desc: "Build the project"
+    cmds:
+      - cargo build
+
+  check:
+    desc: "Check the project"
+    cmds:
+      - cargo check
+
+  fmt:
+    desc: "Format the code"
+    cmds:
+      - cargo fmt
+
+  clippy:
+    desc: "Run clippy linter"
+    cmds:
+      - cargo clippy
+
+  # Test tasks
+  test:
+    desc: "Run unit tests only"
+    cmds:
+      - cargo test
+
+  test-integration:
+    desc: "Run integration tests (requires ClickHouse)"
+    deps: [up, wait-for-clickhouse]
+    cmds:
+      - cargo test --test '*' -- --ignored
+    env:
+      RUST_LOG: debug
+      CLICKHOUSE_URL: "{{.CLICKHOUSE_URL}}"
+
+  test-all:
+    desc: "Run all tests including integration tests"
+    deps: [up, wait-for-clickhouse]
+    cmds:
+      - cargo test
+      - cargo test --test '*' -- --ignored
+    env:
+      RUST_LOG: debug
+      CLICKHOUSE_URL: "{{.CLICKHOUSE_URL}}"
+
+  test-specific:
+    desc: "Run a specific integration test (usage: task test-specific TEST=test_name)"
+    deps: [up, wait-for-clickhouse]
+    cmds:
+      - cargo test --test '*' {{.TEST}} -- --ignored --nocapture
+    env:
+      RUST_LOG: debug
+      CLICKHOUSE_URL: "{{.CLICKHOUSE_URL}}"
+
+  # Development tasks
+  dev:
+    desc: "Run the MCP server in development mode"
+    cmds:
+      - cargo run
+    env:
+      RUST_LOG: debug
+
+  dev-with-clickhouse:
+    desc: "Run the MCP server with ClickHouse"
+    deps: [up, wait-for-clickhouse]
+    cmds:
+      - cargo run
+    env:
+      RUST_LOG: debug
+      CLICKHOUSE_URL: "{{.CLICKHOUSE_URL}}"
+
+  # Clean tasks
+  clean:
+    desc: "Clean build artifacts"
+    cmds:
+      - cargo clean
+      
+  clean-all:
+    desc: "Clean everything including Docker volumes"
+    cmds:
+      - task: down
+      - "{{.DOCKER_COMPOSE}} down -v"
+      - cargo clean
+
+  # CI/CD tasks
+  ci:
+    desc: "Run CI checks (format, clippy, tests)"
+    cmds:
+      - task: fmt
+      - task: clippy
+      - task: test-all
